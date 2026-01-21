@@ -4,9 +4,9 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
 import WidgetCard from "../../components/dashboard/widgets/WidgetCard";
-import WidgetFrame from "../../components/dashboard/widgets/WidgetFrame";
 import KPIWidget from "../../components/dashboard/widgets/KPIWidget";
 import ChartWidget from "../../components/dashboard/widgets/ChartWidget";
+import WidgetSettingsModal, { Select } from "../../components/dashboard/widgets/WidgetSettingsModal";
 
 type WidgetType = "kpi" | "chart";
 type WidgetDef = { id: string; type: WidgetType; config: any };
@@ -96,7 +96,7 @@ export default function DashboardLayout() {
 
         const normalizedWidgets = normalizeWidgets(data.widgets);
 
-        // รองรับ data.layouts.lg/md/... ของเก่า
+        // รองรับ data.layouts.lg/md/. ของเก่า
         const loadedAnyLayout =
           (data.layouts?.lg && Array.isArray(data.layouts.lg) && data.layouts.lg.length) ||
           (data.layouts?.md && Array.isArray(data.layouts.md) && data.layouts.md.length) ||
@@ -148,7 +148,6 @@ export default function DashboardLayout() {
     const t = setTimeout(async () => {
       try {
         setSaving(true);
-        // ส่งแบบที่ backend คุณรับได้ (widgets + layouts) และกันด้วย layout เดี่ยว
         const payload = {
           widgets,
           layout,
@@ -178,9 +177,7 @@ export default function DashboardLayout() {
   const addWidget = (type: WidgetType) => {
     const id = makeId(type);
     const newWidget: WidgetDef =
-      type === "chart"
-        ? { id, type, config: { range: "7d" } }
-        : { id, type, config: { mode: "all" } };
+      type === "chart" ? { id, type, config: { range: "7d" } } : { id, type, config: { mode: "all" } };
 
     setWidgets((prev) => [...prev, newWidget]);
 
@@ -203,12 +200,18 @@ export default function DashboardLayout() {
     setLayout((prev) => prev.filter((l) => l.i !== id));
   };
 
-  const openSettings = (id: string) => {
-    setActiveSettingsId(id);
-    console.log("⚙ open settings for", id);
+  const openSettings = (id: string) => setActiveSettingsId(id);
+  const closeSettings = () => setActiveSettingsId(null);
+
+  const updateWidgetConfig = (id: string, patch: any) => {
+    setWidgets((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, config: { ...(w.config ?? {}), ...patch } } : w))
+    );
   };
 
-  if (loading) return <div className="p-6">Loading dashboard...</div>;
+  const activeWidget = activeSettingsId ? widgetMap.get(activeSettingsId) ?? null : null;
+
+  if (loading) return <div className="p-6">Loading dashboard.</div>;
 
   return (
     <div className="w-full min-h-screen px-6 py-6">
@@ -220,7 +223,7 @@ export default function DashboardLayout() {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="mr-3 text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</div>
+          <div className="mr-3 text-sm text-gray-500">{saving ? "Saving." : "Saved"}</div>
 
           <button className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => addWidget("kpi")}>
             + Add KPI
@@ -235,7 +238,7 @@ export default function DashboardLayout() {
       <GridLayout
         className="layout"
         layout={layout}
-        width={width - 48} // padding ซ้ายขวา (px-6) = 24*2 = 48
+        width={width - 48}
         gridConfig={{
           cols,
           rowHeight: 30,
@@ -254,7 +257,7 @@ export default function DashboardLayout() {
           handles: ["se"],
         }}
         compactor={noCompactor}
-        onLayoutChange={(next) => setLayout([...next])}
+        onLayoutChange={(next) => setLayout(next)} // ✅ แก้บั๊ก
       >
         {widgets.map((w) => {
           const widget = widgetMap.get(w.id);
@@ -265,7 +268,6 @@ export default function DashboardLayout() {
               <WidgetCard>
                 {/* Header ของการ์ด */}
                 <div className="mb-2 flex items-center justify-between">
-                  {/* ✅ ปุ่ม settings อยู่ซ้ายหลังชื่อ */}
                   <div className="flex items-center gap-2">
                     <button
                       className="text-xs text-gray-500 hover:text-gray-900"
@@ -292,18 +294,58 @@ export default function DashboardLayout() {
                   </button>
                 </div>
 
-                <WidgetFrame title={widget.type === "kpi" ? "KPI Summary" : "Weekly Active Users"}>
-                  {widget.type === "kpi" && <KPIWidget />}
-                  {widget.type === "chart" && <ChartWidget />}
-                </WidgetFrame>
+                {/* ✅ ส่ง config เข้า widget */}
+                {widget.type === "kpi" && <KPIWidget config={widget.config} />}
+                {widget.type === "chart" && <ChartWidget config={widget.config} />}
               </WidgetCard>
             </div>
           );
         })}
       </GridLayout>
 
-      {/* ยังไม่ทำ modal จริง */}
-      {activeSettingsId ? null : null}
+      {/* ✅ Settings Modal ใช้งานได้จริง */}
+      <WidgetSettingsModal open={!!activeWidget} title={`Settings: ${activeWidget?.type ?? ""}`} onClose={closeSettings}>
+        {!activeWidget ? null : activeWidget.type === "chart" ? (
+          <Select
+            label="Range"
+            value={activeWidget.config?.range ?? "7d"}
+            options={[
+              { label: "Last 7 days", value: "7d" },
+              { label: "Last 30 days", value: "30d" },
+              { label: "Last 90 days", value: "90d" },
+            ]}
+            onChange={(v) => updateWidgetConfig(activeWidget.id, { range: v })}
+          />
+        ) : (
+          <>
+            <Select
+              label="Mode"
+              value={activeWidget.config?.mode ?? "all"}
+              options={[
+                { label: "All", value: "all" },
+                { label: "Single metric", value: "single" },
+              ]}
+              onChange={(v) => updateWidgetConfig(activeWidget.id, { mode: v })}
+            />
+
+            {(activeWidget.config?.mode ?? "all") === "single" && (
+              <div className="mt-4">
+                <Select
+                  label="Metric"
+                  value={activeWidget.config?.metric ?? "total_users"}
+                  options={[
+                    { label: "Total Users", value: "total_users" },
+                    { label: "Active Sessions", value: "active_sessions" },
+                    { label: "Prediction Accuracy", value: "accuracy" },
+                    { label: "Latency (ms)", value: "latency_ms" },
+                  ]}
+                  onChange={(v) => updateWidgetConfig(activeWidget.id, { metric: v })}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </WidgetSettingsModal>
     </div>
   );
 }
