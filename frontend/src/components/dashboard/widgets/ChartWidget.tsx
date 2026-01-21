@@ -4,12 +4,17 @@ import UserLineChart from "../../charts/UserLineChart";
 import { fetchWeeklyUsers } from "../../../services/weeklyUsers";
 import type { WeeklyUser } from "../../../services/weeklyUsers";
 
-export default function ChartWidget() {
+export type ChartWidgetConfig = {
+  range: "7d" | "30d" | "90d";
+};
+
+export default function ChartWidget({ config }: { config?: ChartWidgetConfig }) {
   const [data, setData] = useState<WeeklyUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  console.log("📈 ChartWidget rendered");
-  
+
+  const range = config?.range ?? "7d";
+
   useEffect(() => {
     let alive = true;
 
@@ -17,12 +22,12 @@ export default function ChartWidget() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetchWeeklyUsers();
+        const res = await fetchWeeklyUsers(range);
         if (!alive) return;
         setData(res);
-      } catch (e) {
+      } catch {
         if (!alive) return;
-        setError("Cannot load weekly users");
+        setError("Cannot load users chart");
       } finally {
         if (alive) setLoading(false);
       }
@@ -31,10 +36,10 @@ export default function ChartWidget() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [range]);
 
   return (
-    <WidgetFrame title="Weekly Active Users" loading={loading} error={error}>
+    <WidgetFrame title={`Weekly Active Users (${range})`} loading={loading} error={error}>
       <UserLineChart data={data} />
     </WidgetFrame>
   );

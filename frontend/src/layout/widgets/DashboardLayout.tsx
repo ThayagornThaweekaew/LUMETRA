@@ -10,21 +10,24 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
 import WidgetCard from "../../components/dashboard/widgets/WidgetCard";
-import KPIWidget from "../../components/dashboard/widgets/KPIWidget";
-import ChartWidget from "../../components/dashboard/widgets/ChartWidget";
+import KPIWidget, { type KPIWidgetConfig } from "../../components/dashboard/widgets/KPIWidget";
+import ChartWidget, { type ChartWidgetConfig } from "../../components/dashboard/widgets/ChartWidget";
+import WidgetSettingsModal, { Select } from "../../components/dashboard/widgets/WidgetSettingsModal";
 
 const ResponsiveGridLayout = WidthProvider(ResponsiveReactGridLayout);
 
 type WidgetType = "kpi" | "chart";
-type WidgetDef = { id: string; type: WidgetType };
+type WidgetConfig = KPIWidgetConfig | ChartWidgetConfig;
+
+type WidgetDef = { id: string; type: WidgetType; config?: WidgetConfig };
 
 // ✅ v4: เก็บ layouts แบบ responsive
 const STORAGE_KEY_V4 = "dashboard-grid-v4";
 const STORAGE_KEY_V3 = "dashboard-grid-v3"; // migrate จากของเดิม (widgets + layout เดียว)
 
 const DEFAULT_WIDGETS: WidgetDef[] = [
-  { id: "kpi-1", type: "kpi" },
-  { id: "chart-1", type: "chart" },
+  { id: "kpi-1", type: "kpi", config: { mode: "all" } },
+  { id: "chart-1", type: "chart", config: { range: "7d" } },
 ];
 
 function makeId(type: WidgetType) {
@@ -35,19 +38,17 @@ function makeId(type: WidgetType) {
 }
 
 function defaultLayoutFor(id: string, type: WidgetType, x: number): LayoutItem {
-  // y: Infinity => ให้ลงไปท้ายสุดแบบอัตโนมัติ
   if (type === "kpi") return { i: id, x, y: Infinity, w: 6, h: 6, minW: 3, minH: 4 };
   return { i: id, x, y: Infinity, w: 6, h: 9, minW: 4, minH: 6 };
 }
 
 function makeLayoutsFromWidgets(widgets: WidgetDef[]): ResponsiveLayouts {
-  // กระจาย 2 คอลัมน์บน lg/md และ 1 คอลัมน์บน sm/xs
   const lg: LayoutItem[] = widgets.map((w, idx) => {
     const x = idx % 2 === 0 ? 0 : 6;
     return defaultLayoutFor(w.id, w.type, x);
   });
 
-  const md: LayoutItem[] = lg.map((l) => ({ ...l })); // 12 cols เหมือนกัน
+  const md: LayoutItem[] = lg.map((l) => ({ ...l }));
   const sm: LayoutItem[] = widgets.map((w, idx) => ({
     i: w.id,
     x: 0,
@@ -67,9 +68,12 @@ export default function DashboardLayout() {
   const [widgets, setWidgets] = useState<WidgetDef[]>([]);
   const [layouts, setLayouts] = useState<ResponsiveLayouts>({ lg: [], md: [], sm: [], xs: [] });
 
+  // settings modal
+  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const current = settingsId ? widgets.find((w) => w.id === settingsId) ?? null : null;
+
   // ✅ load + migrate
   useEffect(() => {
-    // v4
     const savedV4 = localStorage.getItem(STORAGE_KEY_V4);
     if (savedV4) {
       try {
@@ -78,18 +82,29 @@ export default function DashboardLayout() {
           parsed &&
           Array.isArray(parsed.widgets) &&
           parsed.widgets.every(
-            (x: any) => x && typeof x.id === "string" && (x.type === "kpi" || x.type === "chart")
+            (x: any) =>
+              x &&
+              typeof x.id === "string" &&
+              (x.type === "kpi" || x.type === "chart")
           ) &&
           parsed.layouts
         ) {
-          setWidgets(parsed.widgets);
+          // ✅ เติม default config ถ้าไฟล์เก่าไม่มี
+          const loadedWidgets: WidgetDef[] = parsed.widgets.map((w: any) => ({
+            id: w.id,
+            type: w.type,
+            config:
+              w.config ??
+              (w.type === "kpi" ? { mode: "all" } : { range: "7d" }),
+          }));
+
+          setWidgets(loadedWidgets);
           setLayouts(parsed.layouts);
           return;
         }
       } catch {}
     }
 
-    // v3: {widgets, layout} (layout เดียว) -> แปลงเป็น responsive layouts
     const savedV3 = localStorage.getItem(STORAGE_KEY_V3);
     if (savedV3) {
       try {
@@ -99,14 +114,21 @@ export default function DashboardLayout() {
           Array.isArray(parsed.widgets) &&
           Array.isArray(parsed.layout) &&
           parsed.widgets.every(
-            (x: any) => x && typeof x.id === "string" && (x.type === "kpi" || x.type === "chart")
+            (x: any) =>
+              x && typeof x.id === "string" && (x.type === "kpi" || x.type === "chart")
           )
         ) {
-                  setWidgets(parsed.widgets);
-          // ใช้ layout เดิมเป็น lg แล้วทำ sm/xs แบบ 1 คอลัมน์
+          const migratedWidgets: WidgetDef[] = parsed.widgets.map((w: any) => ({
+            id: w.id,
+            type: w.type,
+            config: w.type === "kpi" ? { mode: "all" } : { range: "7d" },
+          }));
+
+          setWidgets(migratedWidgets);
+
           const lg = parsed.layout as LayoutItem[];
           const md = lg.map((l: LayoutItem) => ({ ...l }));
-          const sm: LayoutItem[] = parsed.widgets.map((w: WidgetDef, idx: number) => ({
+          const sm: LayoutItem[] = migratedWidgets.map((w: WidgetDef, idx: number) => ({
             i: w.id,
             x: 0,
             y: idx * 10,
@@ -120,7 +142,6 @@ export default function DashboardLayout() {
       } catch {}
     }
 
-    // v2 / v1 fallback -> default
     const fallbackWidgets = DEFAULT_WIDGETS;
     setWidgets(fallbackWidgets);
     setLayouts(makeLayoutsFromWidgets(fallbackWidgets));
@@ -177,11 +198,24 @@ export default function DashboardLayout() {
 
   function addWidget(type: WidgetType) {
     const id = makeId(type);
-    setWidgets((prev) => [...prev, { id, type }]);
+    const config: WidgetConfig = type === "kpi" ? ({ mode: "all" } as KPIWidgetConfig) : ({ range: "7d" } as ChartWidgetConfig);
+    setWidgets((prev) => [...prev, { id, type, config }]);
   }
 
   function removeWidget(id: string) {
     setWidgets((prev) => prev.filter((w) => w.id !== id));
+    if (settingsId === id) setSettingsId(null);
+  }
+
+  function updateWidgetConfig(id: string, patch: Partial<WidgetConfig>) {
+    setWidgets((prev) =>
+      prev.map((w) => {
+        if (w.id !== id) return w;
+        const baseConfig: WidgetConfig =
+          w.config ?? (w.type === "kpi" ? { mode: "all" } : { range: "7d" });
+        return { ...w, config: { ...baseConfig, ...patch } as WidgetConfig };
+      })
+    );
   }
 
   const hasWidgets = widgets.length > 0;
@@ -231,22 +265,74 @@ export default function DashboardLayout() {
             compactType={null}
             preventCollision={false}
             draggableHandle=".widget-drag-handle"
-            onLayoutChange={(_currentLayout: Layout, allLayouts: ResponsiveLayouts) => setLayouts(allLayouts)}
+            onLayoutChange={(_currentLayout: Layout, allLayouts: ResponsiveLayouts) =>
+              setLayouts(allLayouts)
+            }
           >
             {widgets.map((w) => (
               <div key={w.id} className="h-full">
                 <WidgetCard
                   title={w.type === "kpi" ? "KPI Widget" : "Chart Widget"}
                   onRemove={() => removeWidget(w.id)}
+                  onSettings={() => setSettingsId(w.id)}
                 >
-                  {w.type === "kpi" && <KPIWidget />}
-                  {w.type === "chart" && <ChartWidget />}
+                  {w.type === "kpi" && <KPIWidget config={w.config as KPIWidgetConfig} />}
+                  {w.type === "chart" && <ChartWidget config={w.config as ChartWidgetConfig} />}
                 </WidgetCard>
               </div>
             ))}
           </ResponsiveGridLayout>
         )}
       </div>
+
+      {/* Settings Modal */}
+      <WidgetSettingsModal
+        open={!!current}
+        title={current ? `Settings: ${current.type.toUpperCase()}` : "Settings"}
+        onClose={() => setSettingsId(null)}
+      >
+        {!current ? null : current.type === "kpi" ? (
+          <div className="space-y-4">
+            <Select
+              label="Display mode"
+              value={(current.config as KPIWidgetConfig | undefined)?.mode ?? "all"}
+              options={[
+                { label: "Show all metrics", value: "all" },
+                { label: "Show single metric", value: "single" },
+              ]}
+              onChange={(v) => updateWidgetConfig(current.id, { mode: v as "all" | "single" })}
+            />
+
+            <Select
+              label="Metric (when single)"
+              value={(current.config as KPIWidgetConfig | undefined)?.metric ?? "total_users"}
+              options={[
+                { label: "Total Users", value: "total_users" },
+                { label: "Active Sessions", value: "active_sessions" },
+                { label: "Prediction Accuracy", value: "accuracy" },
+                { label: "Latency", value: "latency_ms" },
+              ]}
+              onChange={(v) => updateWidgetConfig(current.id, { metric: v as "total_users" | "active_sessions" | "accuracy" | "latency_ms" })}
+            />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <Select
+              label="Time range"
+              value={(current.config as ChartWidgetConfig | undefined)?.range ?? "7d"}
+              options={[
+                { label: "Last 7 days", value: "7d" },
+                { label: "Last 30 days", value: "30d" },
+                { label: "Last 90 days", value: "90d" },
+              ]}
+              onChange={(v) => updateWidgetConfig(current.id, { range: v as "7d" | "30d" | "90d" })}
+            />
+            <div className="text-xs text-gray-500">
+              ถ้า backend ยังไม่รองรับ range ก็ยังจะได้ข้อมูลเหมือนเดิม แต่ front พร้อมแล้ว
+            </div>
+          </div>
+        )}
+      </WidgetSettingsModal>
     </div>
   );
 }
