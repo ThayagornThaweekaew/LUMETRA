@@ -8,36 +8,33 @@ export default function ChartWidget() {
   const [data, setData] = useState<WeeklyUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  console.log("📈 ChartWidget rendered");
+  
   useEffect(() => {
-    let isMounted = true;
+    let alive = true;
 
     (async () => {
       try {
         setLoading(true);
         setError(null);
         const res = await fetchWeeklyUsers();
-        if (!isMounted) return;
+        if (!alive) return;
         setData(res);
-      } catch {
-        if (!isMounted) return;
+      } catch (e) {
+        if (!alive) return;
         setError("Cannot load weekly users");
       } finally {
-        if (isMounted) setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
 
     return () => {
-      isMounted = false;
+      alive = false;
     };
   }, []);
 
   return (
-    <WidgetFrame
-      title="Weekly Active Users"
-      loading={loading}
-      error={error}
-    >
+    <WidgetFrame title="Weekly Active Users" loading={loading} error={error}>
       <UserLineChart data={data} />
     </WidgetFrame>
   );

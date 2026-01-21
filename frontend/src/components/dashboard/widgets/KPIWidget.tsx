@@ -7,6 +7,7 @@ export default function KPIWidget() {
   const [data, setData] = useState<KPIResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  console.log("📊 KPIWidget rendered");
 
   useEffect(() => {
     let isMounted = true;
