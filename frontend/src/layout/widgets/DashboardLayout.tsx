@@ -1,338 +1,302 @@
-import { useEffect, useState } from "react";
-import {
-  ResponsiveReactGridLayout,
-  WidthProvider,
-  type LayoutItem,
-  type Layout,
-  type ResponsiveLayouts,
-} from "react-grid-layout/legacy";
+import { useEffect, useMemo, useState } from "react";
+import { Responsive, WidthProvider } from "react-grid-layout";
+import type { Layout, Layouts } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import type { ReactNode } from "react";
+
+
 
 import WidgetCard from "../../components/dashboard/widgets/WidgetCard";
-import KPIWidget, { type KPIWidgetConfig } from "../../components/dashboard/widgets/KPIWidget";
-import ChartWidget, { type ChartWidgetConfig } from "../../components/dashboard/widgets/ChartWidget";
-import WidgetSettingsModal, { Select } from "../../components/dashboard/widgets/WidgetSettingsModal";
+import WidgetFrame from "../../components/dashboard/widgets/WidgetFrame";
+import KPIWidget from "../../components/dashboard/widgets/KPIWidget";
+import ChartWidget from "../../components/dashboard/widgets/ChartWidget";
 
-const ResponsiveGridLayout = WidthProvider(ResponsiveReactGridLayout);
+const ResponsiveGridLayout = WidthProvider(Responsive);
+type Props = { children: ReactNode };
+
+export default function WidgetCard({ children }: Props) {
+  return <div className="rounded-xl border bg-white p-4 shadow-sm">{children}</div>;
+}
 
 type WidgetType = "kpi" | "chart";
-type WidgetConfig = KPIWidgetConfig | ChartWidgetConfig;
+type WidgetDef = { id: string; type: WidgetType; config: any };
 
-type WidgetDef = { id: string; type: WidgetType; config?: WidgetConfig };
+const DASHBOARD_ID = "default";
 
-// ✅ v4: เก็บ layouts แบบ responsive
-const STORAGE_KEY_V4 = "dashboard-grid-v4";
-const STORAGE_KEY_V3 = "dashboard-grid-v3"; // migrate จากของเดิม (widgets + layout เดียว)
-
+// ✅ ค่าเริ่มต้น
 const DEFAULT_WIDGETS: WidgetDef[] = [
   { id: "kpi-1", type: "kpi", config: { mode: "all" } },
   { id: "chart-1", type: "chart", config: { range: "7d" } },
 ];
 
 function makeId(type: WidgetType) {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${type}-${crypto.randomUUID()}`;
-  }
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `${type}-${crypto.randomUUID()}`;
   return `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function defaultLayoutFor(id: string, type: WidgetType, x: number): LayoutItem {
-  if (type === "kpi") return { i: id, x, y: Infinity, w: 6, h: 6, minW: 3, minH: 4 };
-  return { i: id, x, y: Infinity, w: 6, h: 9, minW: 4, minH: 6 };
-}
-
-function makeLayoutsFromWidgets(widgets: WidgetDef[]): ResponsiveLayouts {
-  const lg: LayoutItem[] = widgets.map((w, idx) => {
-    const x = idx % 2 === 0 ? 0 : 6;
-    return defaultLayoutFor(w.id, w.type, x);
-  });
-
-  const md: LayoutItem[] = lg.map((l) => ({ ...l }));
-  const sm: LayoutItem[] = widgets.map((w, idx) => ({
+function makeLayoutsFromWidgets(widgets: WidgetDef[]): Layouts {
+  const lg: Layout[] = widgets.map((w, idx) => ({
     i: w.id,
-    x: 0,
-    y: idx * 10,
-    w: 12,
-    h: w.type === "kpi" ? 6 : 9,
-    minW: 12,
-    minH: w.type === "kpi" ? 4 : 6,
+    x: (idx % 2) * 6,
+    y: Math.floor(idx / 2) * 10,
+    w: 6,
+    h: w.type === "chart" ? 10 : 6,
+    minW: 4,
+    minH: 4,
   }));
 
-  const xs: LayoutItem[] = sm.map((l) => ({ ...l }));
+  return {
+    lg,
+    md: lg.map((it) => ({ ...it, w: Math.min(it.w, 10), x: Math.min(it.x, 4) })),
+    sm: lg.map((it, idx) => ({ ...it, x: 0, y: idx * 10, w: 6 })),
+    xs: lg.map((it, idx) => ({ ...it, x: 0, y: idx * 10, w: 4 })),
+  };
+}
 
-  return { lg, md, sm, xs };
+function normalizeWidgets(raw: any): WidgetDef[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const normalized: WidgetDef[] = arr.map((w: any, idx: number) => {
+    // รองรับแบบเก่า: ["kpi","chart"]
+    if (typeof w === "string") return { id: `${w}-${idx}`, type: w as WidgetType, config: {} };
+    // แบบใหม่: {id,type,config}
+    return {
+      id: String(w.id ?? `${w.type ?? "widget"}-${idx}`),
+      type: (w.type ?? "kpi") as WidgetType,
+      config: w.config ?? {},
+    };
+  });
+
+  return normalized.length ? normalized : DEFAULT_WIDGETS;
 }
 
 export default function DashboardLayout() {
   const [widgets, setWidgets] = useState<WidgetDef[]>([]);
-  const [layouts, setLayouts] = useState<ResponsiveLayouts>({ lg: [], md: [], sm: [], xs: [] });
+  const [layouts, setLayouts] = useState<Layouts>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  // settings modal
-  const [settingsId, setSettingsId] = useState<string | null>(null);
-  const current = settingsId ? widgets.find((w) => w.id === settingsId) ?? null : null;
+  // settings state (ยังไม่ทำ modal จริง แค่ไว้ต่อได้)
+  const [activeSettingsId, setActiveSettingsId] = useState<string | null>(null);
 
-  // ✅ load + migrate
-  useEffect(() => {
-    const savedV4 = localStorage.getItem(STORAGE_KEY_V4);
-    if (savedV4) {
-      try {
-        const parsed = JSON.parse(savedV4);
-        if (
-          parsed &&
-          Array.isArray(parsed.widgets) &&
-          parsed.widgets.every(
-            (x: any) =>
-              x &&
-              typeof x.id === "string" &&
-              (x.type === "kpi" || x.type === "chart")
-          ) &&
-          parsed.layouts
-        ) {
-          // ✅ เติม default config ถ้าไฟล์เก่าไม่มี
-          const loadedWidgets: WidgetDef[] = parsed.widgets.map((w: any) => ({
-            id: w.id,
-            type: w.type,
-            config:
-              w.config ??
-              (w.type === "kpi" ? { mode: "all" } : { range: "7d" }),
-          }));
-
-          setWidgets(loadedWidgets);
-          setLayouts(parsed.layouts);
-          return;
-        }
-      } catch {}
-    }
-
-    const savedV3 = localStorage.getItem(STORAGE_KEY_V3);
-    if (savedV3) {
-      try {
-        const parsed = JSON.parse(savedV3);
-        if (
-          parsed &&
-          Array.isArray(parsed.widgets) &&
-          Array.isArray(parsed.layout) &&
-          parsed.widgets.every(
-            (x: any) =>
-              x && typeof x.id === "string" && (x.type === "kpi" || x.type === "chart")
-          )
-        ) {
-          const migratedWidgets: WidgetDef[] = parsed.widgets.map((w: any) => ({
-            id: w.id,
-            type: w.type,
-            config: w.type === "kpi" ? { mode: "all" } : { range: "7d" },
-          }));
-
-          setWidgets(migratedWidgets);
-
-          const lg = parsed.layout as LayoutItem[];
-          const md = lg.map((l: LayoutItem) => ({ ...l }));
-          const sm: LayoutItem[] = migratedWidgets.map((w: WidgetDef, idx: number) => ({
-            i: w.id,
-            x: 0,
-            y: idx * 10,
-            w: 12,
-            h: w.type === "kpi" ? 6 : 9,
-          }));
-          const xs = sm.map((l: LayoutItem) => ({ ...l }));
-          setLayouts({ lg, md, sm, xs });
-          return;
-        }
-      } catch {}
-    }
-
-    const fallbackWidgets = DEFAULT_WIDGETS;
-    setWidgets(fallbackWidgets);
-    setLayouts(makeLayoutsFromWidgets(fallbackWidgets));
-  }, []);
-
-  // ✅ sync layouts เมื่อ add/remove widget
-  useEffect(() => {
-    if (widgets.length === 0) return;
-
-    setLayouts((prev: ResponsiveLayouts) => {
-      const ids = new Set(widgets.map((w) => w.id));
-
-      const clean = (arr: LayoutItem[] = []) => arr.filter((l) => ids.has(l.i));
-      const next: ResponsiveLayouts = {
-        lg: clean(prev.lg as LayoutItem[]),
-        md: clean(prev.md as LayoutItem[]),
-        sm: clean(prev.sm as LayoutItem[]),
-        xs: clean(prev.xs as LayoutItem[]),
-      };
-
-      const ensure = (bp: keyof ResponsiveLayouts, cols: number) => {
-        const existing = new Set((next[bp] as LayoutItem[] ?? []).map((l: LayoutItem) => l.i));
-        widgets.forEach((w, idx) => {
-          if (existing.has(w.id)) return;
-          const x = cols === 12 ? (idx % 2 === 0 ? 0 : 6) : 0;
-          const item: LayoutItem =
-            cols === 12
-              ? defaultLayoutFor(w.id, w.type, x)
-              : {
-                  i: w.id,
-                  x: 0,
-                  y: Infinity,
-                  w: cols,
-                  h: w.type === "kpi" ? 6 : 9,
-                };
-          next[bp] = [...(next[bp] as LayoutItem[] ?? []), item];
-        });
-      };
-
-      ensure("lg", 12);
-      ensure("md", 12);
-      ensure("sm", 12);
-      ensure("xs", 12);
-
-      return next;
-    });
+  const widgetMap = useMemo(() => {
+    const m = new Map<string, WidgetDef>();
+    widgets.forEach((w) => m.set(w.id, w));
+    return m;
   }, [widgets]);
 
-  // ✅ save v4
+  // ✅ Load: MongoDB -> fallback localStorage -> fallback default
   useEffect(() => {
-    if (widgets.length === 0) return;
-    localStorage.setItem(STORAGE_KEY_V4, JSON.stringify({ widgets, layouts }));
-  }, [widgets, layouts]);
+    (async () => {
+      try {
+        const res = await fetch(`http://localhost:8080/api/layout/${DASHBOARD_ID}`);
+        if (!res.ok) throw new Error("load failed");
+        const data: any = await res.json();
 
-  function addWidget(type: WidgetType) {
+        const normalizedWidgets = normalizeWidgets(data.widgets);
+        const loadedLayouts: Layouts = data.layouts ?? {};
+
+        const ensureLayouts =
+          loadedLayouts?.lg || loadedLayouts?.md || loadedLayouts?.sm || loadedLayouts?.xs
+            ? loadedLayouts
+            : makeLayoutsFromWidgets(normalizedWidgets);
+
+        setWidgets(normalizedWidgets);
+        setLayouts(ensureLayouts);
+      } catch {
+        const saved = localStorage.getItem("dashboard-layout-v2");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const normalizedWidgets = normalizeWidgets(parsed.widgets);
+            const ensureLayouts: Layouts =
+              parsed.layouts?.lg || parsed.layouts?.md || parsed.layouts?.sm || parsed.layouts?.xs
+                ? parsed.layouts
+                : makeLayoutsFromWidgets(normalizedWidgets);
+
+            setWidgets(normalizedWidgets);
+            setLayouts(ensureLayouts);
+          } catch {
+            setWidgets(DEFAULT_WIDGETS);
+            setLayouts(makeLayoutsFromWidgets(DEFAULT_WIDGETS));
+          }
+        } else {
+          setWidgets(DEFAULT_WIDGETS);
+          setLayouts(makeLayoutsFromWidgets(DEFAULT_WIDGETS));
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // ✅ Autosave (debounce): MongoDB + localStorage
+  useEffect(() => {
+    if (loading) return;
+
+    const t = setTimeout(async () => {
+      try {
+        setSaving(true);
+        await fetch(`http://localhost:8080/api/layout/${DASHBOARD_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ widgets, layouts }),
+        });
+        localStorage.setItem("dashboard-layout-v2", JSON.stringify({ widgets, layouts }));
+      } catch {
+        // offline fallback
+        localStorage.setItem("dashboard-layout-v2", JSON.stringify({ widgets, layouts }));
+      } finally {
+        setSaving(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(t);
+  }, [widgets, layouts, loading]);
+
+  const addWidget = (type: WidgetType) => {
     const id = makeId(type);
-    const config: WidgetConfig = type === "kpi" ? ({ mode: "all" } as KPIWidgetConfig) : ({ range: "7d" } as ChartWidgetConfig);
-    setWidgets((prev) => [...prev, { id, type, config }]);
-  }
+    const newWidget: WidgetDef =
+      type === "chart"
+        ? { id, type, config: { range: "7d" } }
+        : { id, type, config: { mode: "all" } };
 
-  function removeWidget(id: string) {
+    setWidgets((prev) => [...prev, newWidget]);
+
+    // เพิ่ม layout ทุก breakpoint (y: Infinity ให้ลงท้าย)
+    setLayouts((prev) => {
+      const next: Layouts = { ...prev };
+
+      const add = (bp: keyof Layouts, cols: number) => {
+        const arr = Array.isArray(next[bp]) ? ([...(next[bp] as Layout[])] as Layout[]) : ([] as Layout[]);
+        arr.push({
+          i: id,
+          x: 0,
+          y: Infinity,
+          w: Math.min(6, cols),
+          h: type === "chart" ? 10 : 6,
+          minW: 4,
+          minH: 4,
+        });
+        next[bp] = arr as any;
+      };
+
+      add("lg", 12);
+      add("md", 10);
+      add("sm", 6);
+      add("xs", 4);
+      return next;
+    });
+  };
+
+  const removeWidget = (id: string) => {
     setWidgets((prev) => prev.filter((w) => w.id !== id));
-    if (settingsId === id) setSettingsId(null);
-  }
+    setLayouts((prev) => {
+      const next: Layouts = {};
+      for (const k of Object.keys(prev)) {
+        const arr = (prev as any)[k] ?? [];
+        (next as any)[k] = arr.filter((it: any) => it.i !== id);
+      }
+      return next;
+    });
+  };
 
-  function updateWidgetConfig(id: string, patch: Partial<WidgetConfig>) {
-    setWidgets((prev) =>
-      prev.map((w) => {
-        if (w.id !== id) return w;
-        const baseConfig: WidgetConfig =
-          w.config ?? (w.type === "kpi" ? { mode: "all" } : { range: "7d" });
-        return { ...w, config: { ...baseConfig, ...patch } as WidgetConfig };
-      })
-    );
-  }
+  const openSettings = (id: string) => {
+    setActiveSettingsId(id);
+    console.log("⚙ open settings for", id);
+    // ต่อ modal จริงได้ทีหลัง
+  };
 
-  const hasWidgets = widgets.length > 0;
+  if (loading) return <div className="p-6">Loading dashboard...</div>;
 
   return (
-    <div className="space-y-4">
+    // ✅ ทำให้ canvas กว้างเต็มจอ
+    <div className="w-full min-h-screen px-6 py-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Dashboard Builder</h2>
-          <p className="text-sm text-gray-500">Drag & drop widgets anywhere on the canvas.</p>
+          <h1 className="text-xl font-semibold">Dashboard Builder</h1>
+          <p className="text-sm text-gray-500">ลากวางอิสระ + ย่อ/ขยายได้ • autosave MongoDB</p>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            className="rounded-md border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={() => addWidget("kpi")}
-            type="button"
-          >
+          <div className="mr-3 text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</div>
+
+          <button className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => addWidget("kpi")}>
             + Add KPI
           </button>
-          <button
-            className="rounded-md border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={() => addWidget("chart")}
-            type="button"
-          >
+          <button className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50" onClick={() => addWidget("chart")}>
             + Add Chart
           </button>
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="min-h-[75vh] w-full rounded-2xl border bg-white p-4 shadow-sm">
-        {!hasWidgets ? (
-          <div className="flex h-[60vh] items-center justify-center text-sm text-gray-500">
-            No widgets. Click “Add KPI/Chart” to start.
-          </div>
-        ) : (
-          <ResponsiveGridLayout
-            className="layout"
-            layouts={layouts}
-            breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 0 }}
-            cols={{ lg: 12, md: 12, sm: 12, xs: 12 }}
-            rowHeight={30}
-            margin={[16, 16]}
-            containerPadding={[0, 0]}
-            compactType={null}
-            preventCollision={false}
-            draggableHandle=".widget-drag-handle"
-            onLayoutChange={(_currentLayout: Layout, allLayouts: ResponsiveLayouts) =>
-              setLayouts(allLayouts)
-            }
-          >
-            {widgets.map((w) => (
-              <div key={w.id} className="h-full">
-                <WidgetCard
-                  title={w.type === "kpi" ? "KPI Widget" : "Chart Widget"}
-                  onRemove={() => removeWidget(w.id)}
-                  onSettings={() => setSettingsId(w.id)}
-                >
-                  {w.type === "kpi" && <KPIWidget config={w.config as KPIWidgetConfig} />}
-                  {w.type === "chart" && <ChartWidget config={w.config as ChartWidgetConfig} />}
+      {/* Grid */}
+      <div className="w-full">
+        <ResponsiveGridLayout
+          className="layout"
+          layouts={layouts}
+          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+          cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
+          rowHeight={30}
+          margin={[16, 16]}
+          containerPadding={[0, 0]}
+          isDraggable
+          isResizable
+          compactType={null} // ✅ วางอิสระ
+          preventCollision={false}
+          draggableHandle=".widget-drag-handle" // ✅ ลากเฉพาะหัวการ์ด
+          onLayoutChange={(_, all) => setLayouts(all)}
+        >
+          {widgets.map((w) => {
+            const widget = widgetMap.get(w.id);
+            if (!widget) return null;
+
+            return (
+              <div key={w.id}>
+                <WidgetCard>
+                  {/* Header ของการ์ด */}
+                  <div className="mb-2 flex items-center justify-between">
+                    {/* ✅ ปุ่ม settings อยู่ซ้ายหลังชื่อ */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-xs text-gray-500 hover:text-gray-900"
+                        onClick={() => openSettings(widget.id)}
+                        title="Settings"
+                        aria-label="Settings"
+                        type="button"
+                      >
+                        ⚙
+                      </button>
+
+                      <div className="widget-drag-handle cursor-move select-none text-sm font-medium text-gray-700">
+                        {widget.type === "kpi" ? "KPI Widget" : "Chart Widget"}
+                      </div>
+                    </div>
+
+                    <button
+                      className="text-xs text-gray-500 hover:text-red-600"
+                      onClick={() => removeWidget(widget.id)}
+                      title="Remove"
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <WidgetFrame title={widget.type === "kpi" ? "KPI Summary" : "Weekly Active Users"}>
+                    {widget.type === "kpi" && <KPIWidget />}
+                    {widget.type === "chart" && <ChartWidget />}
+                  </WidgetFrame>
                 </WidgetCard>
               </div>
-            ))}
-          </ResponsiveGridLayout>
-        )}
+            );
+          })}
+        </ResponsiveGridLayout>
       </div>
 
-      {/* Settings Modal */}
-      <WidgetSettingsModal
-        open={!!current}
-        title={current ? `Settings: ${current.type.toUpperCase()}` : "Settings"}
-        onClose={() => setSettingsId(null)}
-      >
-        {!current ? null : current.type === "kpi" ? (
-          <div className="space-y-4">
-            <Select
-              label="Display mode"
-              value={(current.config as KPIWidgetConfig | undefined)?.mode ?? "all"}
-              options={[
-                { label: "Show all metrics", value: "all" },
-                { label: "Show single metric", value: "single" },
-              ]}
-              onChange={(v) => updateWidgetConfig(current.id, { mode: v as "all" | "single" })}
-            />
-
-            <Select
-              label="Metric (when single)"
-              value={(current.config as KPIWidgetConfig | undefined)?.metric ?? "total_users"}
-              options={[
-                { label: "Total Users", value: "total_users" },
-                { label: "Active Sessions", value: "active_sessions" },
-                { label: "Prediction Accuracy", value: "accuracy" },
-                { label: "Latency", value: "latency_ms" },
-              ]}
-              onChange={(v) => updateWidgetConfig(current.id, { metric: v as "total_users" | "active_sessions" | "accuracy" | "latency_ms" })}
-            />
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <Select
-              label="Time range"
-              value={(current.config as ChartWidgetConfig | undefined)?.range ?? "7d"}
-              options={[
-                { label: "Last 7 days", value: "7d" },
-                { label: "Last 30 days", value: "30d" },
-                { label: "Last 90 days", value: "90d" },
-              ]}
-              onChange={(v) => updateWidgetConfig(current.id, { range: v as "7d" | "30d" | "90d" })}
-            />
-            <div className="text-xs text-gray-500">
-              ถ้า backend ยังไม่รองรับ range ก็ยังจะได้ข้อมูลเหมือนเดิม แต่ front พร้อมแล้ว
-            </div>
-          </div>
-        )}
-      </WidgetSettingsModal>
+      {/* ยังไม่ทำ modal จริง */}
+      {activeSettingsId ? null : null}
     </div>
   );
 }
