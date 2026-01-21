@@ -14,6 +14,9 @@ use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
+use chrono::{Datelike, Duration, Utc};
+
+
 
 // --------------------
 // Helpers
@@ -69,31 +72,64 @@ struct AppState {
 // Handlers (Demo APIs)
 // --------------------
 async fn get_kpi() -> Json<KPIResponse> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // pseudo-random จากเวลา (ไม่ต้องใช้ crate เพิ่ม)
+    let jitter = (now % 17) as u32;
+
     Json(KPIResponse {
-        total_users: 1200,
-        active_sessions: 340,
-        accuracy: 92,
-        latency_ms: 120,
+        total_users: 12_000 + jitter * 31,
+        active_sessions: 320 + (jitter * 7),
+        accuracy: 90 + (jitter % 8),
+        latency_ms: 110 + (jitter * 3),
     })
 }
 
 #[derive(Deserialize)]
 struct WeeklyUsersQuery {
-    range: Option<String>, // รับไว้ก่อน (อนาคตค่อยใช้)
+    range: Option<String>, // "7d" | "30d" | "90d"
 }
 
-async fn weekly_users(Query(_q): Query<WeeklyUsersQuery>) -> Json<Vec<WeeklyUser>> {
-    let data = vec![
-        WeeklyUser { day: "Mon".into(), users: 120 },
-        WeeklyUser { day: "Tue".into(), users: 210 },
-        WeeklyUser { day: "Wed".into(), users: 180 },
-        WeeklyUser { day: "Thu".into(), users: 260 },
-        WeeklyUser { day: "Fri".into(), users: 280 },
-        WeeklyUser { day: "Sat".into(), users: 220 },
-        WeeklyUser { day: "Sun".into(), users: 200 },
-    ];
-    Json(data)
+fn parse_range_days(range: Option<&str>) -> i64 {
+    match range.unwrap_or("7d") {
+        "30d" => 30,
+        "90d" => 90,
+        "7d" | _ => 7,
+    }
 }
+
+async fn weekly_users(Query(q): Query<WeeklyUsersQuery>) -> Json<Vec<WeeklyUser>> {
+    let days = parse_range_days(q.range.as_deref());
+
+    // สร้าง mock data ย้อนหลัง N วัน (เรียงจากเก่า -> ใหม่)
+    let mut out: Vec<WeeklyUser> = Vec::with_capacity(days as usize);
+    let today = Utc::now().date_naive();
+
+    for i in (0..days).rev() {
+        let d = today - Duration::days(i);
+
+        // ทำให้เลขดูสมจริง: มี trend + ความแกว่ง + weekend effect
+        let weekday = d.weekday().number_from_monday() as i64; // 1..7
+        let weekend = if weekday >= 6 { -25 } else { 15 };
+
+        let trend = (days - i) * 2;                // แนวโน้มขึ้นเล็กน้อย
+        let wobble = ((i * 37) % 40) - 20;         // ความแกว่ง pseudo-random (-20..19)
+        let base = 180;
+
+        let users = (base + trend + weekend + wobble).max(10) as u32;
+
+        out.push(WeeklyUser {
+            day: d.format("%Y-%m-%d").to_string(), // ใช้เป็น date string (กราฟใช้ XAxis dataKey="day" ได้เลย)
+            users,
+        });
+    }
+
+    Json(out)
+}
+
 
 // --------------------
 // Handlers (Mongo Layout)
