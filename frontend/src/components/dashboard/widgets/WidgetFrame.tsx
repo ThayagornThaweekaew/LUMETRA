@@ -5,6 +5,7 @@ interface WidgetFrameProps {
   loading?: boolean;
   error?: string | null;
   children: ReactNode;
+  className?: string;
 }
 
 export default function WidgetFrame({
@@ -12,24 +13,27 @@ export default function WidgetFrame({
   loading = false,
   error = null,
   children,
+  className,
 }: WidgetFrameProps) {
   return (
-    <div className="rounded-xl bg-white p-4 shadow-sm">
+    <div className={`h-full flex flex-col min-h-0 ${className ?? ""}`}>
       <h3 className="mb-3 text-sm font-medium text-gray-700">{title}</h3>
 
       {loading && (
-        <div className="flex items-center justify-center py-8">
+        <div className="flex-1 min-h-0 flex items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
         </div>
       )}
 
       {error && !loading && (
-        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
-          {error}
-        </div>
+        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</div>
       )}
 
-      {!loading && !error && children}
+      {!loading && !error && (
+        <div className="flex-1 min-h-0">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

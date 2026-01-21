@@ -39,8 +39,9 @@ export default function ChartWidget({ config }: { config?: ChartWidgetConfig }) 
   }, [range]);
 
   return (
-    <WidgetFrame title={`Weekly Active Users (${range})`} loading={loading} error={error}>
-      <UserLineChart data={data} />
-    </WidgetFrame>
-  );
+  <WidgetFrame title={`Weekly Active Users (${range})`} loading={loading} error={error} className="h-full">
+    <UserLineChart data={data} />
+  </WidgetFrame>
+);
+
 }

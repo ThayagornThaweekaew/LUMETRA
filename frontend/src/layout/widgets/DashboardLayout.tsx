@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import GridLayout, { type LayoutItem, noCompactor } from "react-grid-layout";
+import GridLayout, { type Layout, type Layouts } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
@@ -11,66 +11,74 @@ import WidgetSettingsModal, { Select } from "../../components/dashboard/widgets/
 type WidgetType = "kpi" | "chart";
 type WidgetDef = { id: string; type: WidgetType; config: any };
 
-const DASHBOARD_ID = "default";
+// ✅ เปลี่ยน id เพื่อ “ไม่ติด layout เก่า”
+const DASHBOARD_ID = "default_small_v1";
 
 const DEFAULT_WIDGETS: WidgetDef[] = [
   { id: "kpi-1", type: "kpi", config: { mode: "all" } },
   { id: "chart-1", type: "chart", config: { range: "7d" } },
 ];
 
+function getColsByWidth(width: number) {
+  if (width >= 1200) return 24;
+  if (width >= 996) return 20;
+  if (width >= 768) return 12;
+  return 6;
+}
+
 function makeId(type: WidgetType) {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${type}-${crypto.randomUUID()}`;
-  }
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `${type}-${crypto.randomUUID()}`;
   return `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function normalizeWidgets(raw: any): WidgetDef[] {
   const arr = Array.isArray(raw) ? raw : [];
   const normalized: WidgetDef[] = arr.map((w: any, idx: number) => {
-    // รองรับแบบเก่า: ["kpi","chart"]
     if (typeof w === "string") return { id: `${w}-${idx}`, type: w as WidgetType, config: {} };
-    // แบบใหม่: {id,type,config}
     return {
       id: String(w.id ?? `${w.type ?? "widget"}-${idx}`),
       type: (w.type ?? "kpi") as WidgetType,
       config: w.config ?? {},
     };
   });
-
   return normalized.length ? normalized : DEFAULT_WIDGETS;
 }
 
-function makeLayoutFromWidgets(widgets: WidgetDef[]): LayoutItem[] {
-  // 12 cols
-  return widgets.map((w, idx) => ({
-    i: w.id,
-    x: (idx % 2) * 6,
-    y: Math.floor(idx / 2) * 10,
-    w: 6,
-    h: w.type === "chart" ? 10 : 6,
-    minW: 4,
-    minH: 4,
+/** ✅ ย่อได้เล็กลง: ลด minW/minH */
+const MIN_W = 3; // <- ย่อได้เล็กมาก (ถ้าแคบเกินไปค่อยปรับเป็น 4)
+const MIN_H = 3;
+
+function clampLayoutMin(layout: Layout): Layout {
+  return layout.map((l) => ({
+    ...l,
+    minW: Math.min(l.minW ?? MIN_W, MIN_W) || MIN_W,
+    minH: Math.min(l.minH ?? MIN_H, MIN_H) || MIN_H,
+    w: Math.max(l.w, MIN_W),
+    h: Math.max(l.h, MIN_H),
   }));
 }
 
-function getColsByWidth(width: number) {
-  // ปรับ breakpoint เองแบบง่าย ๆ
-  if (width >= 1200) return 12;
-  if (width >= 996) return 10;
-  if (width >= 768) return 6;
-  return 4;
+function makeLayoutFromWidgets(widgets: WidgetDef[], cols: number): Layout {
+  const w = Math.max(6, Math.floor(cols / 2)); // 2 คอลัมน์แบบเดิม
+  return widgets.map((wd, idx) => ({
+    i: wd.id,
+    x: (idx % 2) * w,
+    y: Math.floor(idx / 2) * 10,
+    w,
+    h: wd.type === "chart" ? 10 : 6,
+    minW: MIN_W,
+    minH: MIN_H,
+  }));
 }
 
 export default function DashboardLayout() {
   const [widgets, setWidgets] = useState<WidgetDef[]>([]);
-  const [layout, setLayout] = useState<LayoutItem[]>([]);
+  const [layout, setLayout] = useState<Layout>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeSettingsId, setActiveSettingsId] = useState<string | null>(null);
 
   const [width, setWidth] = useState<number>(typeof window !== "undefined" ? window.innerWidth : 1200);
-
   const cols = useMemo(() => getColsByWidth(width), [width]);
 
   const widgetMap = useMemo(() => {
@@ -79,7 +87,6 @@ export default function DashboardLayout() {
     return m;
   }, [widgets]);
 
-  // resize listener
   useEffect(() => {
     const onResize = () => setWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
@@ -96,22 +103,20 @@ export default function DashboardLayout() {
 
         const normalizedWidgets = normalizeWidgets(data.widgets);
 
-        // รองรับ data.layouts.lg/md/. ของเก่า
         const loadedAnyLayout =
           (data.layouts?.lg && Array.isArray(data.layouts.lg) && data.layouts.lg.length) ||
           (data.layouts?.md && Array.isArray(data.layouts.md) && data.layouts.md.length) ||
           (data.layouts?.sm && Array.isArray(data.layouts.sm) && data.layouts.sm.length) ||
           (data.layouts?.xs && Array.isArray(data.layouts.xs) && data.layouts.xs.length);
 
-        const loadedLayout: LayoutItem[] = loadedAnyLayout
-          ? // เอา lg เป็นหลัก ถ้าไม่มีค่อย fallback
-            (data.layouts?.lg ?? data.layouts?.md ?? data.layouts?.sm ?? data.layouts?.xs ?? [])
+        const rawLayout: Layout = loadedAnyLayout
+          ? (data.layouts?.lg ?? data.layouts?.md ?? data.layouts?.sm ?? data.layouts?.xs ?? [])
           : Array.isArray(data.layout)
           ? data.layout
-          : makeLayoutFromWidgets(normalizedWidgets);
+          : makeLayoutFromWidgets(normalizedWidgets, cols);
 
         setWidgets(normalizedWidgets);
-        setLayout(loadedLayout);
+        setLayout(clampLayoutMin(rawLayout)); // ✅ บังคับ minW/minH ใหม่
       } catch {
         const saved = localStorage.getItem("dashboard-layout-v2");
         if (saved) {
@@ -119,26 +124,27 @@ export default function DashboardLayout() {
             const parsed = JSON.parse(saved);
             const normalizedWidgets = normalizeWidgets(parsed.widgets);
 
-            const loadedLayout: LayoutItem[] = Array.isArray(parsed.layout)
+            const rawLayout: Layout = Array.isArray(parsed.layout)
               ? parsed.layout
               : Array.isArray(parsed.layouts?.lg)
               ? parsed.layouts.lg
-              : makeLayoutFromWidgets(normalizedWidgets);
+              : makeLayoutFromWidgets(normalizedWidgets, cols);
 
             setWidgets(normalizedWidgets);
-            setLayout(loadedLayout);
+            setLayout(clampLayoutMin(rawLayout)); // ✅ บังคับ minW/minH ใหม่
           } catch {
             setWidgets(DEFAULT_WIDGETS);
-            setLayout(makeLayoutFromWidgets(DEFAULT_WIDGETS));
+            setLayout(makeLayoutFromWidgets(DEFAULT_WIDGETS, cols));
           }
         } else {
           setWidgets(DEFAULT_WIDGETS);
-          setLayout(makeLayoutFromWidgets(DEFAULT_WIDGETS));
+          setLayout(makeLayoutFromWidgets(DEFAULT_WIDGETS, cols));
         }
       } finally {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ✅ Autosave (debounce): MongoDB + localStorage
@@ -151,7 +157,7 @@ export default function DashboardLayout() {
         const payload = {
           widgets,
           layout,
-          layouts: { lg: layout, md: layout, sm: layout, xs: layout },
+          layouts: { lg: layout, md: layout, sm: layout, xs: layout } as Layouts,
         };
 
         await fetch(`http://localhost:8080/api/layout/${DASHBOARD_ID}`, {
@@ -181,16 +187,18 @@ export default function DashboardLayout() {
 
     setWidgets((prev) => [...prev, newWidget]);
 
+    const w = Math.max(6, Math.floor(cols / 2));
+
     setLayout((prev) => [
       ...prev,
       {
         i: id,
         x: 0,
         y: Infinity,
-        w: Math.min(6, cols),
+        w,
         h: type === "chart" ? 10 : 6,
-        minW: 4,
-        minH: 4,
+        minW: MIN_W, // ✅ ย่อได้เล็ก
+        minH: MIN_H,
       },
     ]);
   };
@@ -204,9 +212,7 @@ export default function DashboardLayout() {
   const closeSettings = () => setActiveSettingsId(null);
 
   const updateWidgetConfig = (id: string, patch: any) => {
-    setWidgets((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, config: { ...(w.config ?? {}), ...patch } } : w))
-    );
+    setWidgets((prev) => prev.map((w) => (w.id === id ? { ...w, config: { ...(w.config ?? {}), ...patch } } : w)));
   };
 
   const activeWidget = activeSettingsId ? widgetMap.get(activeSettingsId) ?? null : null;
@@ -215,7 +221,6 @@ export default function DashboardLayout() {
 
   return (
     <div className="w-full min-h-screen px-6 py-6">
-      {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Dashboard Builder</h1>
@@ -234,30 +239,22 @@ export default function DashboardLayout() {
         </div>
       </div>
 
-      {/* Grid */}
       <GridLayout
         className="layout"
         layout={layout}
+        cols={cols}
+        rowHeight={20}
+        margin={[12, 12]}
+        containerPadding={[0, 0]}
         width={width - 48}
-        gridConfig={{
-          cols,
-          rowHeight: 30,
-          margin: [16, 16] as const,
-          containerPadding: [0, 0] as const,
-          maxRows: Infinity,
-        }}
-        dragConfig={{
-          enabled: true,
-          bounded: false,
-          handle: ".widget-drag-handle",
-          threshold: 3,
-        }}
-        resizeConfig={{
-          enabled: true,
-          handles: ["se"],
-        }}
-        compactor={noCompactor}
-        onLayoutChange={(next) => setLayout(next)} // ✅ แก้บั๊ก
+        isDraggable
+        isResizable
+        draggableHandle=".widget-drag-handle"
+        resizeHandles={["se"]}
+        compactType={null}
+        preventCollision={false}
+        useCSSTransforms
+        onLayoutChange={(next) => setLayout(clampLayoutMin(next))} // ✅ กัน minW/minH เด้งกลับจาก layout เก่า
       >
         {widgets.map((w) => {
           const widget = widgetMap.get(w.id);
@@ -265,8 +262,7 @@ export default function DashboardLayout() {
 
           return (
             <div key={w.id}>
-              <WidgetCard>
-                {/* Header ของการ์ด */}
+              <WidgetCard className="h-full">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <button
@@ -294,7 +290,6 @@ export default function DashboardLayout() {
                   </button>
                 </div>
 
-                {/* ✅ ส่ง config เข้า widget */}
                 {widget.type === "kpi" && <KPIWidget config={widget.config} />}
                 {widget.type === "chart" && <ChartWidget config={widget.config} />}
               </WidgetCard>
@@ -303,7 +298,6 @@ export default function DashboardLayout() {
         })}
       </GridLayout>
 
-      {/* ✅ Settings Modal ใช้งานได้จริง */}
       <WidgetSettingsModal open={!!activeWidget} title={`Settings: ${activeWidget?.type ?? ""}`} onClose={closeSettings}>
         {!activeWidget ? null : activeWidget.type === "chart" ? (
           <Select

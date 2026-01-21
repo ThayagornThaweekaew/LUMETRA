@@ -18,18 +18,13 @@ interface Props {
 
 export default function UserLineChart({ data }: Props) {
   return (
-    <div className="w-full h-[300px]">
-      <ResponsiveContainer width="100%" height={300}>
+    <div className="w-full h-full min-h-0">
+      <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
           <XAxis dataKey="day" />
           <YAxis />
           <Tooltip />
-          <Line
-            type="monotone"
-            dataKey="users"
-            stroke="#6366f1"
-            strokeWidth={3}
-          />
+          <Line type="monotone" dataKey="users" stroke="#6366f1" strokeWidth={3} />
         </LineChart>
       </ResponsiveContainer>
     </div>

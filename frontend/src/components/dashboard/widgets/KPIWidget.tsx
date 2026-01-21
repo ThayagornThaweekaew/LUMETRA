@@ -55,17 +55,18 @@ export default function KPIWidget({ config }: { config?: KPIWidgetConfig }) {
   }, [data, mode, metric]);
 
   return (
-    <WidgetFrame title="KPI Summary" loading={loading} error={error}>
-      {cards.length > 0 && (
-        <div className={cards.length === 1 ? "grid grid-cols-1" : "grid grid-cols-2 gap-3"}>
-          {cards.map((c) => (
-            <div key={c.key} className="rounded-lg bg-gray-50 p-3">
-              <div className="text-xs text-gray-500">{c.label}</div>
-              <div className="mt-1 text-xl font-semibold">{c.value}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </WidgetFrame>
-  );
+  <WidgetFrame title="KPI Summary" loading={loading} error={error} className="h-full">
+    {cards.length > 0 && (
+      <div className={cards.length === 1 ? "grid grid-cols-1 h-full" : "grid grid-cols-2 gap-3 h-full"}>
+        {cards.map((c) => (
+          <div key={c.key} className="rounded-lg bg-gray-50 p-3">
+            <div className="text-xs text-gray-500">{c.label}</div>
+            <div className="mt-1 text-xl font-semibold">{c.value}</div>
+          </div>
+        ))}
+      </div>
+    )}
+  </WidgetFrame>
+);
+
 }

@@ -7,7 +7,9 @@ type Props = {
 
 export default function WidgetCard({ children, className }: Props) {
   return (
-    <div className={`rounded-xl border bg-white p-4 shadow-sm ${className ?? ""}`}>
+    <div
+      className={`h-full rounded-xl border bg-white p-4 shadow-sm flex flex-col ${className ?? ""}`}
+    >
       {children}
     </div>
   );

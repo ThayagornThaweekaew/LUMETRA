@@ -1,1 +1,51 @@
 @import "tailwindcss";
+/* ✅ ทำให้ handle จับง่ายขึ้น + ชัดขึ้น */
+.react-resizable-handle {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  opacity: 0.65;
+  background-size: 18px 18px;
+}
+.react-grid-item:hover .react-resizable-handle {
+  opacity: 1;
+}
+.react-resizable-handle-se {
+  cursor: se-resize;
+}
+
+/* ✅ feedback ตอนลาก: ยกชิ้น + เงา */
+.react-grid-item.react-draggable-dragging {
+  z-index: 50;
+  transform: scale(1.01);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+
+/* ✅ placeholder ตอนลาก */
+.react-grid-placeholder {
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px dashed rgba(59, 130, 246, 0.5);
+}
+
+/* ✅ ลดอาการกระตุกจาก transition ของ item ระหว่าง drag/resize */
+.react-grid-item.react-draggable-dragging,
+.react-grid-item.resizing {
+  transition: none !important;
+}
+/* ทำให้ handle ชัด + จับง่าย */
+.rgl-handle {
+  width: 14px;
+  height: 14px;
+  border-radius: 6px;
+  opacity: 0.55;
+}
+.react-grid-item:hover .rgl-handle {
+  opacity: 1;
+}
+
+/* cursor ตามทิศ */
+.rgl-se, .rgl-nw { cursor: nwse-resize; }
+.rgl-sw, .rgl-ne { cursor: nesw-resize; }
+.rgl-e, .rgl-w { cursor: ew-resize; }
+.rgl-n, .rgl-s { cursor: ns-resize; }
